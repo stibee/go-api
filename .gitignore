@@ -5,3 +5,4 @@ trace/go.sum
 method/go.sum
 sql/go.sum
 *.exe
+.idea/

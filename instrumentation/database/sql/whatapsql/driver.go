@@ -4,6 +4,10 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"fmt"
+	"github.com/go-sql-driver/mysql"
+	"strings"
+	"time"
 
 	//"fmt"
 	//"runtime/debug"
@@ -64,7 +68,7 @@ type WrapConnector struct {
 	dataSourceName string
 }
 
-func (ct WrapConnector) Connect(ctx context.Context) (driver.Conn, error) {
+func (ct WrapConnector) Connect(ctx context.Context) (c driver.Conn, err error) {
 	conf := config.GetConfig()
 	if !conf.GoSqlProfileEnabled {
 		return ct.Connector.Connect(ctx)
@@ -72,7 +76,16 @@ func (ct WrapConnector) Connect(ctx context.Context) (driver.Conn, error) {
 
 	wCtx := selectContext(ctx, ct.ctx)
 	sqlCtx, _ := whatapsql.StartOpen(wCtx, ct.dataSourceName)
-	c, err := ct.Connector.Connect(ctx)
+
+	for i := 0; i < 5; i++ {
+		c, err = ct.Connector.Connect(ctx)
+		if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+			fmt.Println("[mysql] retrying", err)
+			time.Sleep(time.Second * 5)
+			continue
+		}
+		break
+	}
 	whatapsql.End(sqlCtx, err)
 	if err != nil {
 		return nil, err
@@ -89,7 +102,15 @@ type WrapConn struct {
 func (c WrapConn) Exec(query string, args []driver.Value) (res driver.Result, err error) {
 	if exec, ok := c.Conn.(driver.Execer); ok {
 		sqlCtx, _ := whatapsql.StartWithParam(c.ctx, c.dataSourceName, query, convertDriverValue(args)...)
-		res, err := exec.Exec(query, args)
+		for i := 0; i < 5; i++ {
+			res, err = exec.Exec(query, args)
+			if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+				fmt.Println("[mysql] retrying", err)
+				time.Sleep(time.Second * 5)
+				continue
+			}
+			break
+		}
 		whatapsql.End(sqlCtx, err)
 		return res, err
 	}
@@ -100,7 +121,15 @@ func (c WrapConn) ExecContext(ctx context.Context, query string, args []driver.N
 	wCtx := selectContext(ctx, c.ctx)
 	if execCtx, ok := c.Conn.(driver.ExecerContext); ok {
 		sqlCtx, _ := whatapsql.StartWithParam(wCtx, c.dataSourceName, query, convertDriverNamedValue(args)...)
-		res, err := execCtx.ExecContext(ctx, query, args)
+		for i := 0; i < 5; i++ {
+			res, err = execCtx.ExecContext(ctx, query, args)
+			if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+				fmt.Println("[mysql] retrying", err)
+				time.Sleep(time.Second * 5)
+				continue
+			}
+			break
+		}
 		whatapsql.End(sqlCtx, err)
 		return res, err
 	}
@@ -110,9 +139,18 @@ func (c WrapConn) ExecContext(ctx context.Context, query string, args []driver.N
 func (c WrapConn) Query(query string, args []driver.Value) (rows driver.Rows, err error) {
 	if queryer, ok := c.Conn.(driver.Queryer); ok {
 		sqlCtx, _ := whatapsql.StartWithParam(c.ctx, c.dataSourceName, query, convertDriverValue(args)...)
-		res, err := queryer.Query(query, args)
+
+		for i := 0; i < 5; i++ {
+			rows, err = queryer.Query(query, args)
+			if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+				fmt.Println("[mysql] retrying", err)
+				time.Sleep(time.Second * 5)
+				continue
+			}
+			break
+		}
 		whatapsql.End(sqlCtx, err)
-		return res, err
+		return
 	}
 	return nil, driver.ErrSkip
 }
@@ -121,14 +159,31 @@ func (c WrapConn) QueryContext(ctx context.Context, query string, args []driver.
 	wCtx := selectContext(ctx, c.ctx)
 	if queryerCtx, ok := c.Conn.(driver.QueryerContext); ok {
 		sqlCtx, _ := whatapsql.StartWithParam(wCtx, c.dataSourceName, query, convertDriverNamedValue(args)...)
-		res, err := queryerCtx.QueryContext(ctx, query, args)
+		for i := 0; i < 5; i++ {
+			rows, err = queryerCtx.QueryContext(ctx, query, args)
+			if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+				fmt.Println("[mysql] retrying", err)
+				time.Sleep(time.Second * 5)
+				continue
+			}
+			break
+		}
 		whatapsql.End(sqlCtx, err)
-		return res, err
+		return
 	}
 	return nil, driver.ErrSkip
 }
 func (c WrapConn) Prepare(query string) (stmt driver.Stmt, err error) {
-	stmt, err = c.Conn.Prepare(query)
+	for i := 0; i < 5; i++ {
+		stmt, err = c.Conn.Prepare(query)
+		if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+			fmt.Println("[mysql] retrying", err)
+			time.Sleep(time.Second * 5)
+			continue
+		}
+		break
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -138,9 +193,25 @@ func (c WrapConn) Prepare(query string) (stmt driver.Stmt, err error) {
 func (c WrapConn) PrepareContext(ctx context.Context, query string) (stmt driver.Stmt, err error) {
 	wCtx := selectContext(ctx, c.ctx)
 	if prepCtx, ok := c.Conn.(driver.ConnPrepareContext); ok {
-		stmt, err = prepCtx.PrepareContext(ctx, query)
+		for i := 0; i < 5; i++ {
+			stmt, err = prepCtx.PrepareContext(ctx, query)
+			if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+				fmt.Println("[mysql] retrying", err)
+				time.Sleep(time.Second * 5)
+				continue
+			}
+			break
+		}
 	} else {
-		stmt, err = c.Conn.Prepare(query)
+		for i := 0; i < 5; i++ {
+			stmt, err = c.Conn.Prepare(query)
+			if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+				fmt.Println("[mysql] retrying", err)
+				time.Sleep(time.Second * 5)
+				continue
+			}
+			break
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -170,7 +241,15 @@ func (c WrapConn) ResetSession(ctx context.Context) error {
 }
 func (c WrapConn) Begin() (tx driver.Tx, err error) {
 	st := dateutil.SystemNow()
-	tx, err = c.Conn.Begin()
+	for i := 0; i < 5; i++ {
+		tx, err = c.Conn.Begin()
+		if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+			fmt.Println("[mysql] retrying", err)
+			time.Sleep(time.Second * 5)
+			continue
+		}
+		break
+	}
 	elapsed := dateutil.SystemNow() - st
 	if elapsed < 0 {
 		elapsed = 0
@@ -187,7 +266,15 @@ func (c WrapConn) BeginTx(ctx context.Context, opts driver.TxOptions) (tx driver
 	wCtx := selectContext(ctx, c.ctx)
 	if connBeginTx, ok := c.Conn.(driver.ConnBeginTx); ok {
 		st := dateutil.SystemNow()
-		tx, err = connBeginTx.BeginTx(ctx, opts)
+		for i := 0; i < 5; i++ {
+			tx, err = connBeginTx.BeginTx(ctx, opts)
+			if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+				fmt.Println("[mysql] retrying", err)
+				time.Sleep(time.Second * 5)
+				continue
+			}
+			break
+		}
 		elapsed := dateutil.SystemNow() - st
 		if elapsed < 0 {
 			elapsed = 0
@@ -199,7 +286,15 @@ func (c WrapConn) BeginTx(ctx context.Context, opts driver.TxOptions) (tx driver
 		}
 		return WrapTx{tx, wCtx, c.dataSourceName}, nil
 	}
-	tx, err = c.Conn.Begin()
+	for i := 0; i < 5; i++ {
+		tx, err = c.Conn.Begin()
+		if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+			fmt.Println("[mysql] retrying", err)
+			time.Sleep(time.Second * 5)
+			continue
+		}
+		break
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +310,15 @@ type WrapStmt struct {
 
 func (s WrapStmt) Exec(args []driver.Value) (res driver.Result, err error) {
 	sqlCtx, _ := whatapsql.StartWithParam(s.ctx, s.dataSourceName, s.preparedSql, convertDriverValue(args)...)
-	res, err = s.Stmt.Exec(args)
+	for i := 0; i < 5; i++ {
+		res, err = s.Stmt.Exec(args)
+		if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+			fmt.Println("[mysql] retrying", err)
+			time.Sleep(time.Second * 5)
+			continue
+		}
+		break
+	}
 	whatapsql.End(sqlCtx, err)
 	return res, err
 }
@@ -224,7 +327,15 @@ func (s WrapStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (re
 	wCtx := selectContext(ctx, s.ctx)
 	if execCtx, ok := s.Stmt.(driver.StmtExecContext); ok {
 		sqlCtx, _ := whatapsql.StartWithParam(wCtx, s.dataSourceName, s.preparedSql, convertDriverNamedValue(args)...)
-		res, err := execCtx.ExecContext(ctx, args)
+		for i := 0; i < 5; i++ {
+			res, err = execCtx.ExecContext(ctx, args)
+			if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+				fmt.Println("[mysql] retrying", err)
+				time.Sleep(time.Second * 5)
+				continue
+			}
+			break
+		}
 		whatapsql.End(sqlCtx, err)
 		return res, err
 	}
@@ -237,18 +348,34 @@ func (s WrapStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (re
 
 func (s WrapStmt) Query(args []driver.Value) (rows driver.Rows, err error) {
 	sqlCtx, _ := whatapsql.StartWithParam(s.ctx, s.dataSourceName, s.preparedSql, convertDriverValue(args)...)
-	res, err := s.Stmt.Query(args)
+	for i := 0; i < 5; i++ {
+		rows, err = s.Stmt.Query(args)
+		if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+			fmt.Println("[mysql] retrying", err)
+			time.Sleep(time.Second * 5)
+			continue
+		}
+		break
+	}
 	whatapsql.End(sqlCtx, err)
-	return res, err
+	return
 }
 
 func (s WrapStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (rows driver.Rows, err error) {
 	wCtx := selectContext(ctx, s.ctx)
 	if queryerCtx, ok := s.Stmt.(driver.StmtQueryContext); ok {
 		sqlCtx, _ := whatapsql.StartWithParam(wCtx, s.dataSourceName, s.preparedSql, convertDriverNamedValue(args)...)
-		res, err := queryerCtx.QueryContext(ctx, args)
+		for i := 0; i < 5; i++ {
+			rows, err = queryerCtx.QueryContext(ctx, args)
+			if errors.Is(err, mysql.ErrInvalidConn) || strings.Contains(err.Error(), "No connection could be made because the target machine actively refused it") {
+				fmt.Println("[mysql] retrying", err)
+				time.Sleep(time.Second * 5)
+				continue
+			}
+			break
+		}
 		whatapsql.End(sqlCtx, err)
-		return res, err
+		return
 	}
 	dargs, err := namedValueToValue(args)
 	if err != nil {
